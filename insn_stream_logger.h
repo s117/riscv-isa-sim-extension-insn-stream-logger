@@ -1,11 +1,11 @@
 #ifndef __EXTENSION_INSN_STREAM_LOGGER
 #define __EXTENSION_INSN_STREAM_LOGGER
 
-#ifndef RISCV_ENABLE_DBG_TRACE
-#error Feature RISCV_ENABLE_DBG_TRACE is required for this extension.
-#endif
-
 #include "extension.h"
+
+#ifndef RISCV_ENABLE_DBG_TRACE
+#error "Feature RISCV_ENABLE_DBG_TRACE is required for this extension."
+#endif
 
 #include <map>
 #include <memory>

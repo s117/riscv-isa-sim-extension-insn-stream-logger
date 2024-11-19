@@ -1,4 +1,9 @@
 # riscv-isa-sim plugin to log the dynamic instruction stream
+
+if (NOT ENABLE_DBG_TRACE)
+    message(FATAL_ERROR "Instruction tracing support is required for this extension. Enabling it by adding flag '-DENABLE_DBG_TRACE=1' to the cmake command.")
+endif ()
+
 set(
         insn_stream_logger_hdrs
         insn_stream_logger.h
