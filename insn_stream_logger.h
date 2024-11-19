@@ -1,8 +1,17 @@
 #ifndef __EXTENSION_INSN_STREAM_LOGGER
 #define __EXTENSION_INSN_STREAM_LOGGER
+
+#ifndef RISCV_ENABLE_DBG_TRACE
+#error Feature RISCV_ENABLE_DBG_TRACE is required for this extension.
+#endif
+
 #include "extension.h"
 
+#include <map>
+#include <memory>
+
 class insn_stream_logger : public extension_t {
+
 public:
   const char *name() override { return "insn_stream_logger"; }
 

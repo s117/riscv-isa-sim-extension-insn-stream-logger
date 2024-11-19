@@ -2,7 +2,13 @@
 #include <cassert>
 #include <iomanip>
 
-void trace_stream_output_t::output_insn_record(const insn_record_t &insn_rec) {
+trace_file_output_t::trace_file_output_t(const std::string &output_basename) {
+  auto output_fullname = output_basename + OUTPUT_EXT;
+  m_out_stream.open(output_fullname.c_str());
+  assert(m_out_stream.good());
+}
+
+void trace_file_output_t::issue_insn(const insn_record_t &insn_rec) {
   if (insn_rec.valid) {
     auto insn = insn_rec.insn;
     auto insn_pc = insn_rec.pc;
@@ -79,4 +85,56 @@ void trace_stream_output_t::output_insn_record(const insn_record_t &insn_rec) {
 
     m_out_stream << std::endl;
   }
+}
+
+
+trace_last_n_wrapper_t::trace_last_n_wrapper_t(size_t n, std::unique_ptr<trace_output_t> wrapped_output)
+    : m_insn_rec_circ_buf(n),
+      m_sz_buf(n),
+      m_tail(0),
+      m_head(0),
+      m_empty(true),
+      m_wrapped_output(std::move(wrapped_output)) {}
+
+trace_last_n_wrapper_t::~trace_last_n_wrapper_t() {
+  for (
+    insn_record_t *p = insn_rec_circ_buf_pop();
+    p != nullptr;
+    p = insn_rec_circ_buf_pop()) {
+    m_wrapped_output->issue_insn(*p);
+  }
+}
+
+void trace_last_n_wrapper_t::issue_insn(const insn_record_t &insn) {
+  insn_rec_circ_buf_push(insn);
+}
+
+void trace_last_n_wrapper_t::insn_rec_circ_buf_push(const insn_record_t &insn_rec) {
+  m_insn_rec_circ_buf[m_tail] = insn_rec;
+
+  if (likely(m_tail == m_head)) {
+    if (unlikely(m_empty)) {
+      m_tail = next_idx(m_tail);
+      m_empty = false;
+    }
+    else {
+      m_head = m_tail = next_idx(m_tail);
+    }
+  }
+  else {
+    m_tail = next_idx(m_tail);
+  }
+}
+
+insn_record_t *trace_last_n_wrapper_t::insn_rec_circ_buf_pop() {
+  insn_record_t *ret_ptr = nullptr;
+
+  if (!m_empty) {
+    ret_ptr = &m_insn_rec_circ_buf[m_head];
+    m_head = next_idx(m_head);
+    if (m_head == m_tail)
+      m_empty = true;
+  }
+
+  return ret_ptr;
 }

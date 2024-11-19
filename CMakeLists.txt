@@ -18,3 +18,4 @@ add_library(
 )
 target_link_libraries(insn_stream_logger fesvr-interface)
 target_link_libraries(insn_stream_logger riscv-interface)
+target_compile_definitions(insn_stream_logger PRIVATE GZIP_OUTPUT)
