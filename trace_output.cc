@@ -1,34 +1,51 @@
 #include "trace_output.h"
-#include <cinttypes>
 #include <cassert>
+#include <iomanip>
 
 void trace_stream_output_t::output_insn_record(const insn_record_t &insn_rec) {
   if (insn_rec.valid) {
     auto insn = insn_rec.insn;
     auto insn_pc = insn_rec.pc;
+    m_out_stream << std::setfill('0');
 
-    fprintf(m_fp_output, "S/%" PRIu64 " C/%" PRIu64 " I/%" PRIu64 " PC/0x%016" PRIx64 " (0x%08" PRIx64 ") %s\n",
-            insn_rec.seqno, insn_rec.cycle, insn_rec.instret, insn_pc, insn.bits() & 0xffffffff,
-            m_disassembler.disassemble(insn).c_str());
+    m_out_stream << std::dec
+                 << "S/" << insn_rec.seqno
+                 << " C/" << insn_rec.cycle
+                 << " I/" << insn_rec.instret
+                 << std::hex
+                 << " PC/0x" << std::setw(16) << insn_pc
+                 << " (0x" << std::setw(8) << (insn.bits() & 0xffffffff) << ") "
+                 << m_disassembler.disassemble(insn)
+                 << std::endl;
+
     if (!insn_rec.good) {
-      fprintf(m_fp_output, "%s", "\tINV_FETCH\t0x00000001\n");
+      m_out_stream << "\tINV_FETCH\t0x00000001" << std::endl;
     }
+
     for (size_t rs_idx = 0; rs_idx < MAX_RSRC; ++rs_idx)
-      if (insn_rec.rs_rec[rs_idx].valid)
-        fprintf(
-          m_fp_output, "\tRS%" PRIu64 "/%s\t0x%08" PRIx64 "\n",
-          rs_idx, xpr_name[insn_rec.rs_rec[rs_idx].n],
-          insn_rec.rs_rec[rs_idx].val.xval);
+      if (insn_rec.rs_rec[rs_idx].valid) {
+        m_out_stream << std::dec
+                     << "\tRS" << rs_idx
+                     << "/"
+                     << xpr_name[insn_rec.rs_rec[rs_idx].n]
+                     << std::hex
+                     << "\t0x" << std::setw(8) << insn_rec.rs_rec[rs_idx].val.xval
+                     << std::endl;
+      }
 
     for (auto &rd: insn_rec.rd_rec)
-      if (rd.valid && rd.n != 0)
-        fprintf(
-          m_fp_output, "\tRD/%s\t0x%08" PRIx64 "\n",
-          xpr_name[rd.n], rd.val.xval);
+      if (rd.valid && rd.n != 0) {
+        m_out_stream << "\tRD/" << xpr_name[rd.n]
+                     << std::hex
+                     << "\t0x" << std::setw(8) << rd.val.xval
+                     << std::endl;
+      }
 
     if (insn.opcode() == OP_LOAD || insn.opcode() == OP_STORE) {
       assert(insn_rec.mem_rec.valid);
-      fprintf(m_fp_output, "\tADDR\t0x%08" PRIx64 "\n", insn_rec.mem_rec.vaddr);
+      m_out_stream << std::hex
+                   << "\tADDR\t0x" << std::setw(8) << insn_rec.mem_rec.vaddr
+                   << std::endl;
     }
     else if (insn.opcode() == OP_BRANCH || insn.opcode() == OP_JAL || insn.opcode() == OP_JALR) {
       reg_t taken_target = 0;
@@ -46,16 +63,20 @@ void trace_stream_output_t::output_insn_record(const insn_record_t &insn_rec) {
         default:
           assert(0);
       }
-      fprintf(m_fp_output, "\tTAKEN_PC\t0x%08" PRIx64 "\n", taken_target);
+      m_out_stream << std::hex
+                   << "\tTAKEN_PC\t0x" << std::setw(8) << taken_target
+                   << std::endl;
     }
 
     if (insn_rec.exception) {
-      fprintf(m_fp_output, "\tEXCEPTION\t0x%016" PRIx64 "\n", 1l);
-      fprintf(m_fp_output, "\tEVEC\t0x%016" PRIx64 "\n", insn_rec.post_exe_state.evec);
-      fprintf(m_fp_output, "\tECAUSE\t0x%016" PRIx64 "\n", insn_rec.post_exe_state.cause);
-      fprintf(m_fp_output, "\tEPC\t0x%016" PRIx64 "\n", insn_rec.post_exe_state.epc);
-      fprintf(m_fp_output, "\tSR\t0x%08" PRIx32 "\n", insn_rec.post_exe_state.sr);
+      m_out_stream << std::hex
+                   << "\tEXCEPTION\t0x" << std::setw(16) << 1l << std::endl
+                   << "\tEVEC\t0x" << std::setw(16) << insn_rec.post_exe_state.evec << std::endl
+                   << "\tECAUSE\t0x" << std::setw(16) << insn_rec.post_exe_state.cause << std::endl
+                   << "\tEPC\t0x" << std::setw(16) << insn_rec.post_exe_state.epc << std::endl
+                   << "\tSR\t0x" << std::setw(8) << insn_rec.post_exe_state.sr << std::endl;
     }
-    fprintf(m_fp_output, "%s", "\n");
+
+    m_out_stream << std::endl;
   }
 }
