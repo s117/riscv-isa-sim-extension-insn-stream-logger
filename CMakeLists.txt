@@ -21,6 +21,12 @@ add_library(
         ${insn_stream_logger_hdrs}
         ${insn_stream_logger_srcs}
 )
+find_package(ZLIB REQUIRED)
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 target_link_libraries(insn_stream_logger fesvr-interface)
 target_link_libraries(insn_stream_logger riscv-interface)
+target_link_libraries(insn_stream_logger ZLIB::ZLIB)
+target_link_libraries(insn_stream_logger Threads::Threads)
 target_compile_definitions(insn_stream_logger PRIVATE GZIP_OUTPUT)

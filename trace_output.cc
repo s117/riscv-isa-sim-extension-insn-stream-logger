@@ -1,10 +1,84 @@
 #include "trace_output.h"
 #include <cassert>
+#include <iostream>
 
-trace_file_output_t::trace_file_output_t(const std::string &output_basename) {
-  auto output_fullname = output_basename + OUTPUT_EXT;
-  m_out_stream.open(output_fullname.c_str());
-  assert(m_out_stream.good());
+/************* Trace File Writer *************/
+trace_file_writer_t::trace_file_writer_t(const std::string &path) : m_path(path) {
+#ifdef GZIP_OUTPUT
+  m_file = gzopen(path.c_str(), "wb");
+#else
+  m_file = fopen(path.c_str(), "wb");
+#endif
+  assert(m_file);
+  m_chunk.reserve(CHUNK_SIZE);
+  m_thread = std::thread(&trace_file_writer_t::writer_main, this);
+}
+
+trace_file_writer_t::~trace_file_writer_t() {
+  if (!m_chunk.empty()) submit_chunk();
+  {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_done = true;
+  }
+  m_cv_queued.notify_one();
+  m_thread.join();
+#ifdef GZIP_OUTPUT
+  bool closed = gzclose(m_file) == Z_OK;
+#else
+  bool closed = fclose(m_file) == 0;
+#endif
+  if (!closed && !m_write_failed)
+    std::cerr << "insn_stream_logger: failed to finish writing " << m_path << std::endl;
+}
+
+void trace_file_writer_t::submit_chunk() {
+  std::vector<char> next;
+  {
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_cv_space.wait(lock, [this] { return m_queue.size() < MAX_QUEUED; });
+    m_queue.push_back(std::move(m_chunk));
+    if (!m_spare.empty()) {
+      next = std::move(m_spare.back());
+      m_spare.pop_back();
+    }
+  }
+  m_cv_queued.notify_one();
+  next.clear();
+  next.reserve(CHUNK_SIZE);
+  m_chunk = std::move(next);
+}
+
+void trace_file_writer_t::writer_main() {
+  std::unique_lock<std::mutex> lock(m_mutex);
+  while (true) {
+    m_cv_queued.wait(lock, [this] { return !m_queue.empty() || m_done; });
+    if (m_queue.empty()) break; // done, and everything is written
+    std::vector<char> chunk = std::move(m_queue.front());
+    m_queue.pop_front();
+    lock.unlock();
+    write_to_file(chunk);
+    lock.lock();
+    if (m_spare.size() < MAX_QUEUED) m_spare.push_back(std::move(chunk));
+    m_cv_space.notify_one();
+  }
+}
+
+void trace_file_writer_t::write_to_file(const std::vector<char> &chunk) {
+  if (m_write_failed) return;
+#ifdef GZIP_OUTPUT
+  bool written = gzwrite(m_file, chunk.data(), unsigned(chunk.size())) == int(chunk.size());
+#else
+  bool written = fwrite(chunk.data(), 1, chunk.size(), m_file) == chunk.size();
+#endif
+  if (!written) {
+    m_write_failed = true;
+    std::cerr << "insn_stream_logger: failed to write " << m_path << ", the rest of the trace is dropped" << std::endl;
+  }
+}
+
+/************* Trace File Output *************/
+trace_file_output_t::trace_file_output_t(const std::string &output_basename)
+    : m_writer(output_basename + OUTPUT_EXT) {
 }
 
 // The record is formatted by hand into a reusable buffer, as iostream formatting was a large part of the run time.
@@ -126,6 +200,6 @@ void trace_file_output_t::issue_insn(const insn_record_t &insn_rec) {
     }
 
     buf.push_back('\n');
-    m_out_stream.write(buf.data(), buf.size());
+    m_writer.write(buf.data(), buf.size());
   }
 }
