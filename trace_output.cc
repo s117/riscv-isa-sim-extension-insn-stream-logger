@@ -1,6 +1,5 @@
 #include "trace_output.h"
 #include <cassert>
-#include <iomanip>
 
 trace_file_output_t::trace_file_output_t(const std::string &output_basename) {
   auto output_fullname = output_basename + OUTPUT_EXT;
@@ -8,50 +7,88 @@ trace_file_output_t::trace_file_output_t(const std::string &output_basename) {
   assert(m_out_stream.good());
 }
 
+// The record is formatted by hand into a reusable buffer, as iostream formatting was a large part of the run time.
+
+static void put_str(std::string &buf, const char *s) {
+  buf.append(s);
+}
+
+static void put_dec(std::string &buf, uint64_t val) {
+  char digits[20];
+  size_t n = 0;
+  do {
+    digits[n++] = char('0' + val % 10);
+    val /= 10;
+  } while (val);
+  while (n)
+    buf.push_back(digits[--n]);
+}
+
+// Lowercase hex, zero-padded to at least width digits (never truncated)
+static void put_hex(std::string &buf, uint64_t val, size_t width) {
+  static const char hex_digits[] = "0123456789abcdef";
+  char digits[16];
+  size_t n = 0;
+  do {
+    digits[n++] = hex_digits[val & 0xf];
+    val >>= 4;
+  } while (val);
+  for (size_t i = n; i < width; ++i)
+    buf.push_back('0');
+  while (n)
+    buf.push_back(digits[--n]);
+}
+
 void trace_file_output_t::issue_insn(const insn_record_t &insn_rec) {
   if (insn_rec.valid) {
     auto insn = insn_rec.insn;
     auto insn_pc = insn_rec.pc;
-    m_out_stream << std::setfill('0');
+    std::string &buf = m_buf;
+    buf.clear();
 
-    m_out_stream << std::dec
-                 << "S/" << insn_rec.seqno
-                 << " C/" << insn_rec.cycle
-                 << " I/" << insn_rec.instret
-                 << std::hex
-                 << " PC/0x" << std::setw(16) << insn_pc
-                 << " (0x" << std::setw(8) << (insn.bits() & 0xffffffff) << ") "
-                 << m_disassembler.disassemble(insn)
-                 << std::endl;
+    put_str(buf, "S/");
+    put_dec(buf, insn_rec.seqno);
+    put_str(buf, " C/");
+    put_dec(buf, insn_rec.cycle);
+    put_str(buf, " I/");
+    put_dec(buf, insn_rec.instret);
+    put_str(buf, " PC/0x");
+    put_hex(buf, insn_pc, 16);
+    put_str(buf, " (0x");
+    put_hex(buf, insn.bits() & 0xffffffff, 8);
+    put_str(buf, ") ");
+    buf.append(m_disassembler.disassemble(insn));
+    buf.push_back('\n');
 
     if (!insn_rec.good) {
-      m_out_stream << "\tINV_FETCH\t0x00000001" << std::endl;
+      put_str(buf, "\tINV_FETCH\t0x00000001\n");
     }
 
     for (size_t rs_idx = 0; rs_idx < MAX_RSRC; ++rs_idx)
       if (insn_rec.rs_rec[rs_idx].valid) {
-        m_out_stream << std::dec
-                     << "\tRS" << rs_idx
-                     << "/"
-                     << xpr_name[insn_rec.rs_rec[rs_idx].n]
-                     << std::hex
-                     << "\t0x" << std::setw(8) << insn_rec.rs_rec[rs_idx].val.xval
-                     << std::endl;
+        put_str(buf, "\tRS");
+        put_dec(buf, rs_idx);
+        put_str(buf, "/");
+        put_str(buf, xpr_name[insn_rec.rs_rec[rs_idx].n]);
+        put_str(buf, "\t0x");
+        put_hex(buf, insn_rec.rs_rec[rs_idx].val.xval, 8);
+        buf.push_back('\n');
       }
 
     for (auto &rd: insn_rec.rd_rec)
       if (rd.valid && rd.n != 0) {
-        m_out_stream << "\tRD/" << xpr_name[rd.n]
-                     << std::hex
-                     << "\t0x" << std::setw(8) << rd.val.xval
-                     << std::endl;
+        put_str(buf, "\tRD/");
+        put_str(buf, xpr_name[rd.n]);
+        put_str(buf, "\t0x");
+        put_hex(buf, rd.val.xval, 8);
+        buf.push_back('\n');
       }
 
     if (insn.opcode() == OP_LOAD || insn.opcode() == OP_STORE) {
       assert(insn_rec.mem_rec.valid);
-      m_out_stream << std::hex
-                   << "\tADDR\t0x" << std::setw(8) << insn_rec.mem_rec.vaddr
-                   << std::endl;
+      put_str(buf, "\tADDR\t0x");
+      put_hex(buf, insn_rec.mem_rec.vaddr, 8);
+      buf.push_back('\n');
     }
     else if (insn.opcode() == OP_BRANCH || insn.opcode() == OP_JAL || insn.opcode() == OP_JALR) {
       reg_t taken_target = 0;
@@ -69,20 +106,26 @@ void trace_file_output_t::issue_insn(const insn_record_t &insn_rec) {
         default:
           assert(0);
       }
-      m_out_stream << std::hex
-                   << "\tTAKEN_PC\t0x" << std::setw(8) << taken_target
-                   << std::endl;
+      put_str(buf, "\tTAKEN_PC\t0x");
+      put_hex(buf, taken_target, 8);
+      buf.push_back('\n');
     }
 
     if (insn_rec.exception) {
-      m_out_stream << std::hex
-                   << "\tEXCEPTION\t0x" << std::setw(16) << 1l << std::endl
-                   << "\tEVEC\t0x" << std::setw(16) << insn_rec.post_exe_state.evec << std::endl
-                   << "\tECAUSE\t0x" << std::setw(16) << insn_rec.post_exe_state.cause << std::endl
-                   << "\tEPC\t0x" << std::setw(16) << insn_rec.post_exe_state.epc << std::endl
-                   << "\tSR\t0x" << std::setw(8) << insn_rec.post_exe_state.sr << std::endl;
+      put_str(buf, "\tEXCEPTION\t0x");
+      put_hex(buf, 1, 16);
+      put_str(buf, "\n\tEVEC\t0x");
+      put_hex(buf, insn_rec.post_exe_state.evec, 16);
+      put_str(buf, "\n\tECAUSE\t0x");
+      put_hex(buf, insn_rec.post_exe_state.cause, 16);
+      put_str(buf, "\n\tEPC\t0x");
+      put_hex(buf, insn_rec.post_exe_state.epc, 16);
+      put_str(buf, "\n\tSR\t0x");
+      put_hex(buf, insn_rec.post_exe_state.sr, 8);
+      buf.push_back('\n');
     }
 
-    m_out_stream << std::endl;
+    buf.push_back('\n');
+    m_out_stream.write(buf.data(), buf.size());
   }
 }

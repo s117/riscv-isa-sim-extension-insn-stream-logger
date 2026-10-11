@@ -25,6 +25,7 @@ public:
 private:
   ostream_t m_out_stream;
   disassembler_t m_disassembler;
+  std::string m_buf; // the record being formatted
 };
 
 
